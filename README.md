@@ -1,5 +1,7 @@
 # claude-multipane
 
+> ⚠️ **0.1.0-beta · work in progress.** The status line, hooks, and `setup-panes.sh` work today; the orchestrator skills are still landing. Expect rough edges.
+
 A status line and workflow toolkit for running **[Claude Code](https://claude.com/claude-code) across several tmux panes** — one pane per git worktree — with an **orchestrator** pane that dispatches work to the others and sees, at a glance, **which pane is working on which GitHub issue**.
 
 ```
