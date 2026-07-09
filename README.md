@@ -14,9 +14,22 @@ The status line is the visible part; the point is the workflow: you keep N Claud
 - **`statusline-command.sh`** — the status line. Per pane it shows: working directory, git branch + worktree name, the **active GitHub issue** (orange `#N`), a cross-worktree "→" indicator when a pane's work has moved to another worktree, the model, context usage, and optional TTS/STT status.
 - **`hooks/track-current-issue.sh`** — a `PostToolUse` hook that derives the current issue **per worktree** from the `in progress` label actions you already run: it sets the issue on `gh issue edit <N> --add-label "in progress"` and clears it on `gh issue close <N>` / `--remove-label "in progress"`. State lives in `/tmp/claude-current-issue-<worktree>.txt`; the orchestrator pane can also write that file directly when it dispatches a task.
 - **`hooks/track-active-context.sh`** — a `PostToolUse` hook that records when Claude's recent commands touch a *different* worktree than the pane's own (e.g. you started in `pane1` but ran a merge in `develop`), which the status line renders as a "→ branch" hint.
-- **`panes.conf.example`** — the shared config the orchestrator scripts/skills read (project name, worktree root, main branch, pane count). Copy to `~/.claude/panes.conf`.
+- **`bin/setup-panes.sh`** — **builds the workspace**: for a project in `panes.conf` it creates one git worktree per pane (`<repo>_pane1..N` on branches `pane1..N`), opens a tmux session split into those panes, `cd`s each into its worktree, and launches Claude Code in each. Idempotent (skips existing worktrees/session) and supports `DRY_RUN=1`.
+- **`panes.conf.example`** — the shared config the tooling reads (project name, main worktree path, main branch, pane count, tmux target). Copy to `~/.claude/panes.conf`.
 
-_Coming (config-driven, from `panes.conf`): `setup-panes.sh` to open/restore N panes for any project, plus the orchestrator skills (dispatch-to-pane, sync-worktrees, focus-worktree, merge-to-main)._
+_Coming: the orchestrator skills (dispatch-to-pane, sync-worktrees, focus-worktree, merge-to-main), also config-driven from `panes.conf`._
+
+## Create the panes
+
+Configure your project in `~/.claude/panes.conf` (one line — see `panes.conf.example`), then:
+
+```bash
+DRY_RUN=1 ~/path/to/claude-multipane/bin/setup-panes.sh xyz   # preview
+~/path/to/claude-multipane/bin/setup-panes.sh xyz             # do it
+tmux attach -t xyz
+```
+
+You get N panes, each in its own git worktree, each running Claude Code — one "orchestrator" pane plus workers, the layout this toolkit is built around.
 
 ## Requirements
 

@@ -1,6 +1,16 @@
 # claude-multipane config — copy to ~/.claude/panes.conf and edit.
-# One project per line:  <name> <worktree-root> <main-branch> <pane-count>
-# Panes are the worktrees <worktree-root>_pane1 .. _paneN alongside the main worktree.
+# One project per line (whitespace-separated):
 #
-# Example (a project "xyz" with 4 panes, main branch "main"):
-# xyz  /Users/you/Documents/xyz  main  4
+#   <name>  <main-worktree-path>  <main-branch>  <pane-count>  <tmux-target-prefix>
+#
+#   name                project label (also the git-worktree prefix)
+#   main-worktree-path  the checked-out repo (the "main"/integration worktree)
+#   main-branch         branch new pane worktrees fork from (e.g. main, develop)
+#   pane-count          how many panes/worktrees to create
+#   tmux-target-prefix  "<session>:<window>", e.g. xyz:1  -> panes xyz:1.1 .. .N
+#
+# Pane worktrees are derived as <main-worktree-path>_pane1 .. _paneN on
+# branches pane1 .. paneN. `bin/setup-panes.sh <name>` creates them + the panes.
+#
+# Example — a project "xyz", 4 panes, forking from main:
+xyz  /Users/you/dev/xyz  main  4  xyz:1
