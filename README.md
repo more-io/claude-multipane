@@ -1,6 +1,6 @@
 # claude-multipane
 
-> ⚠️ **0.1.0-beta · work in progress.** The status line, hooks, and `setup-panes.sh` work today; the orchestrator skills are still landing. Expect rough edges.
+> ⚠️ **0.1.0-beta · work in progress.** The status line, hooks, `setup-panes.sh`, and the orchestrator skills all work today, driven by one `panes.conf`. Expect rough edges.
 
 A status line and workflow toolkit for running **[Claude Code](https://claude.com/claude-code) across several tmux panes** — one pane per git worktree — with an **orchestrator** pane that dispatches work to the others and sees, at a glance, **which pane is working on which GitHub issue**.
 
@@ -18,8 +18,11 @@ The status line is the visible part; the point is the workflow: you keep N Claud
 - **`hooks/track-active-context.sh`** — a `PostToolUse` hook that records when Claude's recent commands touch a *different* worktree than the pane's own (e.g. you started in `pane1` but ran a merge in `develop`), which the status line renders as a "→ branch" hint.
 - **`bin/setup-panes.sh`** — **builds the workspace**: for a project in `panes.conf` it creates one git worktree per pane (`<repo>_pane1..N` on branches `pane1..N`), opens a tmux session split into those panes, `cd`s each into its worktree, and launches Claude Code in each. Idempotent (skips existing worktrees/session) and supports `DRY_RUN=1`.
 - **`panes.conf.example`** — the shared config the tooling reads (project name, main worktree path, main branch, pane count, tmux target). Copy to `~/.claude/panes.conf`.
-
-_Coming: the orchestrator skills (dispatch-to-pane, sync-worktrees, focus-worktree, merge-to-main), also config-driven from `panes.conf`._
+- **`skills/`** — [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) (task-specific instruction files Claude loads on demand) for the orchestrator layout, all config-driven from `panes.conf`:
+  - **`send-to-pane`** — hand a self-contained task to another pane's Claude ("tell pane2 …").
+  - **`merge-to-develop`** — merge the current worktree's branch into the integration branch (in its own worktree, via `git -C`).
+  - **`sync-panes-with-develop`** — bring every pane worktree up to date with the integration branch, reporting per-pane status.
+  - **`focus-worktree`** — reset the status line's cross-worktree "→" hint back to the pane you actually want to work in.
 
 ## Create the panes
 
@@ -50,6 +53,11 @@ ln -sf "$PWD/statusline-command.sh"       ~/.claude/statusline-command.sh
 ln -sf "$PWD/hooks/track-current-issue.sh" ~/.claude/hooks/track-current-issue.sh
 ln -sf "$PWD/hooks/track-active-context.sh" ~/.claude/hooks/track-active-context.sh
 cp panes.conf.example ~/.claude/panes.conf   # then edit
+# orchestrator skills (optional):
+for s in send-to-pane merge-to-develop sync-panes-with-develop focus-worktree; do
+  mkdir -p ~/.claude/skills/"$s"
+  ln -sf "$PWD/skills/$s/SKILL.md" ~/.claude/skills/"$s"/SKILL.md
+done
 ```
 
 Then register them in `~/.claude/settings.json`:
