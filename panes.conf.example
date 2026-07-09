@@ -1,0 +1,6 @@
+# claude-multipane config — copy to ~/.claude/panes.conf and edit.
+# One project per line:  <name> <worktree-root> <main-branch> <pane-count>
+# Panes are the worktrees <worktree-root>_pane1 .. _paneN alongside the main worktree.
+#
+# Example (a project "xyz" with 4 panes, main branch "main"):
+# xyz  /Users/you/Documents/xyz  main  4
