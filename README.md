@@ -19,6 +19,7 @@ The status line is the visible part; the point is the workflow: you keep N Claud
 - **`bin/setup-panes.sh`** — **builds the workspace**: for a project in `panes.conf` it creates one git worktree per pane (`<repo>_pane1..N` on branches `pane1..N`), opens a tmux session split into those panes, `cd`s each into its worktree, and launches Claude Code in each. Idempotent (skips existing worktrees/session) and supports `DRY_RUN=1`.
 - **`panes.conf.example`** — the shared config the tooling reads (project name, main worktree path, main branch, pane count, tmux target). Copy to `~/.claude/panes.conf`.
 - **`skills/`** — [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) (task-specific instruction files Claude loads on demand) for the orchestrator layout, all config-driven from `panes.conf`:
+  - **`orchestrate-panes`** — the full operating protocol for the coordinating pane: dispatch briefs, ping-back rule, independent verification, central merge/close, capacity handover. The distilled lessons from running this daily.
   - **`send-to-pane`** — hand a self-contained task to another pane's Claude ("tell pane2 …").
   - **`merge-to-develop`** — merge the current worktree's branch into the integration branch (in its own worktree, via `git -C`).
   - **`sync-panes-with-develop`** — bring every pane worktree up to date with the integration branch, reporting per-pane status.
@@ -54,7 +55,7 @@ ln -sf "$PWD/hooks/track-current-issue.sh" ~/.claude/hooks/track-current-issue.s
 ln -sf "$PWD/hooks/track-active-context.sh" ~/.claude/hooks/track-active-context.sh
 cp panes.conf.example ~/.claude/panes.conf   # then edit
 # orchestrator skills (optional):
-for s in send-to-pane merge-to-develop sync-panes-with-develop focus-worktree; do
+for s in orchestrate-panes send-to-pane merge-to-develop sync-panes-with-develop focus-worktree; do
   mkdir -p ~/.claude/skills/"$s"
   ln -sf "$PWD/skills/$s/SKILL.md" ~/.claude/skills/"$s"/SKILL.md
 done
