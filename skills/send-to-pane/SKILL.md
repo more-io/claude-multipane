@@ -32,6 +32,7 @@ tmux send-keys -t <session>:<window>.2 '' Enter
 
 ## Important rules
 
+- **Long messages often stay stuck as an unsubmitted paste** — with bracketed paste, the first Enter frequently lands inside the paste instead of submitting it (observed repeatedly with multi-sentence briefs). After sending, ALWAYS capture the pane and check for a `[Pasted text #N]` marker at the prompt; if present, send one more bare Enter (`tmux send-keys -t <target> C-m`) and verify again. Never assume delivery without seeing the pane actually working.
 - **Always single-quote** the message to prevent shell expansion; **escape inner single quotes** as `'\''`.
 - **Always send the follow-up bare `Enter`** — the first Enter doesn't always submit mid-approval.
 - **Check the target pane first**: `tmux capture-pane -t <session>:<window>.2 -p | tail -25` — is it idle or busy?
