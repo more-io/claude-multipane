@@ -14,6 +14,10 @@ session_id=$(echo "$input" | jq -r '.session_id // empty')
 # Knackpunkt: das 1M-Kontext-Flag lebt nur im RAM und taucht in .model.id NICHT
 # auf — nur der display_name zeigt "(1M context)". Wir rekonstruieren daher die
 # CLI-Model-id (z.B. "claude-opus-4-8[1m]", exakt wie in ~/.claude.json).
+# Ablage unter ~/.claude/models/ statt /tmp: macOS' Periodic-Cleanup löscht in
+# /tmp alles, was 3+ Tage nicht angefasst wurde — dort wäre das Model-Gedächtnis
+# nicht verlässlich. update-claude.sh prunt alte Einträge.
+MODEL_DIR="$HOME/.claude/models"
 if [ -n "$session_id" ]; then
     model_id=$(echo "$input" | jq -r '.model.id // empty')
     if [ -n "$model_id" ]; then
@@ -26,7 +30,8 @@ if [ -n "$session_id" ]; then
                 esac
                 ;;
         esac
-        printf '%s' "$model_id" > "/tmp/claude-model-${session_id}.txt"
+        [ -d "$MODEL_DIR" ] || mkdir -p "$MODEL_DIR"
+        printf '%s' "$model_id" > "$MODEL_DIR/${session_id}.txt"
     fi
 fi
 branch=""
