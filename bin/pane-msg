@@ -58,6 +58,12 @@ input_is_clear() {
   cap="$(tmux capture-pane -t "$target" -p -e 2>/dev/null)" || return 1
   # Busy? Claude shows "esc to interrupt" while working — never touch it then.
   printf '%s\n' "$cap" | grep -q 'esc to interrupt' && return 1
+  # Modal menu / dialog open (e.g. /mcp connector list, a command picker, a
+  # permission prompt)? Its footer offers navigation/confirmation keys, so a
+  # nudge's keystrokes would drive the menu — confirm or move a selection —
+  # instead of submitting a prompt. These markers never appear on the normal
+  # idle prompt ("shift+tab to cycle" is deliberately NOT matched).
+  printf '%s\n' "$cap" | grep -qiE 'to navigate|esc to cancel|esc to exit|to confirm|to select' && return 1
   # The live input line is the last one carrying the prompt marker "❯".
   # (An EMPTY prompt renders as bare "❯" — capture trims the trailing space —
   # so match the marker without a following space.)
