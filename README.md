@@ -17,7 +17,9 @@ The status line is the visible part; the point is the workflow: you keep N Claud
 - **`hooks/track-current-issue.sh`** — a `PostToolUse` hook that derives the current issue **per worktree** from the `in progress` label actions you already run: it sets the issue on `gh issue edit <N> --add-label "in progress"` and clears it on `gh issue close <N>` / `--remove-label "in progress"`. State lives in `/tmp/claude-current-issue-<worktree>.txt`; the orchestrator pane can also write that file directly when it dispatches a task.
 - **`hooks/track-active-context.sh`** — a `PostToolUse` hook that records when Claude's recent commands touch a *different* worktree than the pane's own (e.g. you started in `pane1` but ran a merge in `develop`), which the status line renders as a "→ branch" hint.
 - **`hooks/pane-inbox-drain.sh`** — a `Stop` hook that delivers queued inter-pane messages: when a pane finishes a turn it drains that pane's inbox and hands any messages to Claude **through the hook channel, without ever typing into the input prompt**. No-op unless a message is waiting. See [Inter-pane messaging](#inter-pane-messaging-pane-inbox).
-- **`bin/pane-msg`** — the messaging CLI behind the `pane-inbox` skill: append a message to another pane's inbox file (`send`), drain your own (`read`/`peek`), or check counts (`status`). Payload lives in files, so it never clobbers what the user is typing in the target pane.
+- **`bin/pane-msg`** — the messaging CLI behind the `pane-inbox` skill: append a message to another pane's inbox file (`send`), drain your own (`read`/`peek`), check counts + stale flags (`status`), or run the delivery sweep (`sweep`). Payload lives in files, so it never clobbers what the user is typing in the target pane.
+- **`hooks/pane-inbox-watcher.sh`** + **`launchagents/com.claude-multipane.pane-inbox-watcher.plist`** — the event-driven delivery watcher: a launchd agent watches the mailbox trigger file and runs `pane-msg sweep` on each send, retrying the guarded nudge until a busy target frees up. Sets a Homebrew `PATH` + UTF-8 locale that launchd otherwise lacks. See [Inter-pane messaging](#inter-pane-messaging-pane-inbox).
+- **`bin/pane-inbox-install.sh`** — one-shot idempotent installer for the messaging layer (symlinks the skill + Stop hook, installs real copies of `pane-msg`/watcher outside `~/Documents` for launchd/TCC, generates + loads the launchd agent).
 - **`bin/setup-panes.sh`** — **builds the workspace**: for a project in `panes.conf` it creates one git worktree per pane (`<repo>_pane1..N` on branches `pane1..N`), opens a tmux session split into those panes, `cd`s each into its worktree, and launches Claude Code in each. Idempotent (skips existing worktrees/session) and supports `DRY_RUN=1`.
 - **`panes.conf.example`** — the shared config the tooling reads (project name, main worktree path, main branch, pane count, tmux target). Copy to `~/.claude/panes.conf`.
 - **`skills/`** — [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) (task-specific instruction files Claude loads on demand) for the orchestrator layout, all config-driven from `panes.conf`:
@@ -108,33 +110,58 @@ the user is typing** in that pane, and a long brief can stick as an unsubmitted
 
 **Model:** `pane-msg send` appends the message (a JSON line) to the recipient's
 inbox file under `~/.claude/tmux-state/mailbox/`. The payload is never typed into
-the prompt. Delivery uses a **guarded nudge by default**, backed by a Stop hook:
+the prompt. Three independent mechanisms deliver it — together they give
+**at-least-once** delivery without clobbering input:
 
-1. **Guarded nudge (default).** `send` checks the target: if it's **idle with an
-   empty input line**, it sends a tiny `read-inbox` wake via `send-keys` so the
-   pane reads immediately. If the target is **busy** or **the user is typing
-   there**, it sends no keystroke — so it can never clobber input — and leaves the
-   message for the Stop hook.
-2. **Stop-hook drain (fallback, promptless).** When any pane finishes a turn, the
-   `pane-inbox-drain.sh` `Stop` hook reads its inbox and feeds queued messages back
-   through the hook channel, never touching the input line — catching whatever the
-   guarded nudge skipped.
+1. **Guarded nudge (send time).** `send` checks the target: if it's idle with a
+   clear prompt, it sends a tiny `read-inbox` wake via `send-keys`. The check
+   reads the prompt *with escape sequences* (`capture-pane -e`) so it can tell a
+   real keystroke from Claude Code's dimmed next-step **suggestion** (ghost text,
+   SGR faint) — otherwise the ever-present suggestion looks like typing and the
+   pane is never woken. If the target is busy or the user is really typing, no
+   keystroke is sent.
+2. **launchd watcher (event-driven retry).** Every `send` bumps a trigger file
+   (`mailbox/.event`); a launchd agent (`WatchPaths`) runs a bounded, self-
+   terminating sweep that retries the guarded nudge until the target is free —
+   this is what delivers to a pane that was **busy at send time and then went
+   idle** (the "sleeping pane" gap). No perpetual polling: the sweep exits once
+   inboxes are empty or a short window elapses.
+3. **Stop-hook drain (turn boundary).** When any pane finishes a turn, the
+   `pane-inbox-drain.sh` `Stop` hook drains its own inbox through the hook
+   channel, never touching the input line.
 
-So an idle empty pane reads at once; a busy pane reads when its turn ends; and a
-pane holding the user's half-typed text waits until they submit it. Use
-`--silent` to skip the nudge entirely, or `--force-nudge` to send a keystroke
-regardless (can clobber — avoid).
+`pane-msg status` shows unread counts and flags anything unread too long as
+`⚠ STALE Nmin`, so a stuck message is visible to a human.
 
 ```bash
-pane-msg send 4later:1.2 --type task --ref 4711 "Self-contained brief…"   # guarded nudge (default)
-pane-msg send 4later:1.2 --type note --silent "FYI, no rush."             # never nudge; Stop-hook delivers
+pane-msg send 4later:1.2 --type task --ref 4711 "Self-contained brief…"   # guarded nudge + watcher
+pane-msg send 4later:1.2 --type note --silent "FYI, no rush."             # no send-time nudge; watcher/Stop-hook deliver
 pane-msg read      # drain your own inbox (auto-detects your pane via $TMUX_PANE)
-pane-msg status    # unread counts across all mailboxes
+pane-msg status    # unread counts + STALE flags across all mailboxes
 ```
 
 `--type` is `task | question | answer | status | note`; `--ref` threads replies
 (e.g. an issue number). The orchestrator and worker panes use this as their
 default channel — see the `orchestrate-panes` and `send-to-pane` skills.
+
+### Install the messaging layer
+
+```bash
+~/path/to/claude-multipane/bin/pane-inbox-install.sh
+```
+
+This symlinks the skill and the `Stop` hook, installs **real copies** of
+`pane-msg` and the watcher wrapper into `~/.claude` (launchd can't execute files
+under `~/Documents` — TCC — so these can't be symlinks), generates + loads the
+launchd watcher, and creates the trigger file. Re-run it after editing `pane-msg`
+or the wrapper. It does **not** touch `settings.json`: register the `Stop` hook
+there once by hand —
+
+```json
+{ "hooks": { "Stop": [ { "hooks": [
+  { "type": "command", "command": "bash ~/.claude/hooks/pane-inbox-drain.sh", "timeout": 8 }
+] } ] } }
+```
 
 ## Optional companions
 

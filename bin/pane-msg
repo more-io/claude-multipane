@@ -46,22 +46,30 @@ self_target() {
 }
 
 # Return 0 only if it is SAFE to type into the target's prompt: Claude not busy
-# AND the input line is empty (so we can't clobber what the user is typing).
+# AND the input line carries no REAL user keystrokes.
 input_is_clear() {
-  local target="$1" cap line rest
-  cap="$(tmux capture-pane -t "$target" -p 2>/dev/null)" || return 1
+  local target="$1" cap line rest esc
+  esc=$'\e'
+  # Read WITH escape sequences (-e). Crucial: Claude Code pre-fills an idle
+  # prompt with a dimmed next-step SUGGESTION (ghost text, rendered faint via
+  # SGR 2 = ESC[2m…). That is NOT the user typing. Reading the plain text can't
+  # tell them apart, so the guard mistook the ever-present suggestion for input
+  # and never woke a pane (field find 2026-07-28, the real cause of sleepers).
+  cap="$(tmux capture-pane -t "$target" -p -e 2>/dev/null)" || return 1
   # Busy? Claude shows "esc to interrupt" while working — never touch it then.
   printf '%s\n' "$cap" | grep -q 'esc to interrupt' && return 1
   # The live input line is the last one carrying the prompt marker "❯".
-  # NB: match WITHOUT the trailing space — tmux capture-pane trims trailing
-  # whitespace, so an EMPTY prompt renders as bare "❯" and the old "❯ "
-  # pattern missed exactly the one state that is safe to nudge (field find
-  # 2026-07-28: idle panes were never woken).
+  # (An EMPTY prompt renders as bare "❯" — capture trims the trailing space —
+  # so match the marker without a following space.)
   line="$(printf '%s\n' "$cap" | grep '❯' | tail -1)"
   [ -n "$line" ] || return 1        # no prompt visible → don't risk it
+  # Strip the dimmed suggestion span (ESC[2m + its faint text, up to the next
+  # escape), then all remaining SGR escapes. What's left after the marker is
+  # only REAL user input, if any.
+  line="$(printf '%s' "$line" | sed -E "s/${esc}\[2m[^${esc}]*//g; s/${esc}\[[0-9;]*m//g")"
   rest="${line#*❯}"
   rest="$(printf '%s' "$rest" | tr -d '[:space:]')"
-  [ -z "$rest" ]                    # empty after the marker → safe
+  [ -z "$rest" ]                    # nothing real after the marker → safe to nudge
 }
 
 nudge() {
@@ -106,10 +114,14 @@ case "$cmd" in
     line="$(FROM="$from" TO="$target" TYPE="$type" REF="$ref" TS="$ts" BODY="$body" \
       python3 -c 'import json,os; print(json.dumps({k.lower():os.environ[k] for k in ("FROM","TO","TYPE","REF","TS","BODY")}))')"
     printf '%s\n' "$line" >> "$MB/$key.inbox.jsonl"
+    # Bump the watcher trigger file so launchd (WatchPaths) fires the delivery
+    # sweeper. This is what makes delivery reliable even when the target is busy
+    # right now: the sweeper retries the guarded nudge until the target is free.
+    printf '%s\n' "$(date +%s)" > "$MB/.event" 2>/dev/null || true
 
     case "$nudge_mode" in
       never)
-        echo "queued → $target (no nudge; delivered on target's next turn via Stop-hook)"
+        echo "queued → $target (no send-time nudge; watcher / its Stop-hook will deliver)"
         ;;
       force)
         nudge "$target"
@@ -120,10 +132,57 @@ case "$cmd" in
           nudge "$target"
           echo "queued + nudged → $target (input was clear)"
         else
-          echo "queued → $target (input busy/typing — NOT nudged; Stop-hook delivers on its next turn)"
+          echo "queued → $target (busy/typing now — watcher retries until it's free)"
         fi
         ;;
     esac
+    ;;
+
+  sweep)
+    # Bounded, self-terminating delivery sweeper — the launchd watcher runs this
+    # on every mailbox write (WatchPaths on <MB>/.event). For each mailbox with
+    # unread messages whose target pane is idle with a clear prompt, it sends a
+    # guarded nudge; it loops (short window) so a target that was BUSY at send
+    # time still gets woken once it frees up, then EXITS — no perpetual polling.
+    # A target that stays busy long is covered by its own Stop-hook on turn end.
+    window=90; interval=10
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --window)   window="${2:-90}";  shift 2;;
+        --interval) interval="${2:-10}"; shift 2;;
+        *) shift;;
+      esac
+    done
+    WLOG="${PANE_INBOX_WATCH_LOG:-/tmp/pane-inbox-watcher.log}"
+    wlog() { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*" >> "$WLOG" 2>/dev/null || true; }
+    shopt -s nullglob
+    now="$(date +%s)"; deadline=$((now + window))
+    wlog "sweep start (window=${window}s interval=${interval}s)"
+    while :; do
+      any_unread=0
+      for inbox in "$MB"/*.inbox.jsonl; do
+        key="$(basename "$inbox" .inbox.jsonl)"
+        off="$MB/$key.offset"; start=0; [ -f "$off" ] && start="$(cat "$off" 2>/dev/null || echo 0)"
+        total="$(wc -l < "$inbox" | tr -d ' ')"
+        [ "$start" -ge "$total" ] && continue          # nothing unread here
+        any_unread=1
+        # Resolve the tmux target from the message's own "to" field — avoids the
+        # ambiguous reverse of key_of (both ':' and '.' map to '_').
+        target="$(tail -1 "$inbox" | python3 -c 'import sys,json;
+try: print(json.loads(sys.stdin.readline()).get("to",""))
+except Exception: print("")' 2>/dev/null)"
+        [ -n "$target" ] || continue
+        if input_is_clear "$target"; then
+          nudge "$target"
+          wlog "nudged $target ($((total-start)) unread)"
+        else
+          wlog "skip $target (busy/typing, $((total-start)) unread)"
+        fi
+      done
+      [ "$any_unread" -eq 0 ] && { wlog "sweep done — all delivered/empty"; break; }
+      [ "$(date +%s)" -ge "$deadline" ] && { wlog "sweep window elapsed — leaving rest to Stop-hook/stale"; break; }
+      sleep "$interval"
+    done
     ;;
 
   read|peek)
@@ -157,14 +216,34 @@ for i, l in enumerate(sys.stdin, 1):
 
   status)
     shopt -s nullglob
+    stale_min="${PANE_MSG_STALE_MIN:-10}"
     any=0
     for inbox in "$MB"/*.inbox.jsonl; do
       any=1
       key="$(basename "$inbox" .inbox.jsonl)"
-      off="$MB/$key.offset"; start=0; [ -f "$off" ] && start="$(cat "$off")"
+      off="$MB/$key.offset"; start=0; [ -f "$off" ] && start="$(cat "$off" 2>/dev/null || echo 0)"
       total="$(wc -l < "$inbox" | tr -d ' ')"
       unread=$((total-start))
-      printf '%-16s %s unread (%s total)\n' "$key" "$unread" "$total"
+      extra=""
+      if [ "$unread" -gt 0 ]; then
+        # Age of the OLDEST unread message (line start+1) → flag stale for humans.
+        oldest_ts="$(sed -n "$((start+1))p" "$inbox" | python3 -c 'import sys,json
+try: print(json.loads(sys.stdin.readline()).get("ts",""))
+except Exception: print("")' 2>/dev/null)"
+        agemin="$(TS="$oldest_ts" python3 -c '
+import os, datetime
+try:
+    t = datetime.datetime.strptime(os.environ["TS"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    print(int((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds() // 60))
+except Exception:
+    print(-1)' 2>/dev/null)"
+        if [ "${agemin:-0}" -ge "$stale_min" ] 2>/dev/null; then
+          extra="  ⚠ STALE ${agemin}min"
+        elif [ "${agemin:-0}" -ge 0 ] 2>/dev/null; then
+          extra="  (oldest ${agemin}min)"
+        fi
+      fi
+      printf '%-16s %s unread (%s total)%s\n' "$key" "$unread" "$total" "$extra"
     done
     [ "$any" -eq 1 ] || echo "(no mailboxes yet)"
     ;;

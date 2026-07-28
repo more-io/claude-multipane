@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  pane-inbox delivery watcher.
+
+  Fires the bounded delivery sweeper whenever a pane-msg is sent (WatchPaths on
+  the mailbox trigger file), so a message to a pane that is BUSY at send time is
+  still delivered once the pane frees up — without any perpetual polling.
+
+  Install: replace __HOME__ with your home dir and copy to ~/Library/LaunchAgents/,
+  then `launchctl load` it (see README). The trigger file must exist before load:
+  `touch __HOME__/.claude/tmux-state/mailbox/.event`.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claude-multipane.pane-inbox-watcher</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.claude/hooks/pane-inbox-watcher.sh</string>
+  </array>
+
+  <!-- Event-driven: run only when a message is queued (the trigger file is
+       bumped by `pane-msg send`). Not a timer. -->
+  <key>WatchPaths</key>
+  <array>
+    <string>__HOME__/.claude/tmux-state/mailbox/.event</string>
+  </array>
+
+  <!-- Don't relaunch more than once per 5s if events burst. -->
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/pane-inbox-watcher.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/pane-inbox-watcher.err.log</string>
+</dict>
+</plist>
