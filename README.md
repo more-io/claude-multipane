@@ -107,21 +107,27 @@ the user is typing** in that pane, and a long brief can stick as an unsubmitted
 `[Pasted text]`. `pane-inbox` fixes both by moving the payload off the prompt.
 
 **Model:** `pane-msg send` appends the message (a JSON line) to the recipient's
-inbox file under `~/.claude/tmux-state/mailbox/`. Nothing is typed into the
-prompt. Delivery happens two ways:
+inbox file under `~/.claude/tmux-state/mailbox/`. The payload is never typed into
+the prompt. Delivery uses a **guarded nudge by default**, backed by a Stop hook:
 
-1. **Stop-hook drain (default, promptless).** When the recipient pane finishes
-   any turn — including a turn the user themselves triggered — the
-   `pane-inbox-drain.sh` `Stop` hook reads its inbox and feeds the messages back
-   through the hook channel. The user's typing is never touched.
-2. **Guarded nudge (opt-in `--nudge`).** To cold-start a *fully idle* pane (one
-   that won't end a turn on its own), `--nudge` sends a tiny `read-inbox` wake via
-   `send-keys` — but **only if that pane's input line is empty**, so it still
-   can't clobber typing. Otherwise it silently falls back to Stop-hook delivery.
+1. **Guarded nudge (default).** `send` checks the target: if it's **idle with an
+   empty input line**, it sends a tiny `read-inbox` wake via `send-keys` so the
+   pane reads immediately. If the target is **busy** or **the user is typing
+   there**, it sends no keystroke — so it can never clobber input — and leaves the
+   message for the Stop hook.
+2. **Stop-hook drain (fallback, promptless).** When any pane finishes a turn, the
+   `pane-inbox-drain.sh` `Stop` hook reads its inbox and feeds queued messages back
+   through the hook channel, never touching the input line — catching whatever the
+   guarded nudge skipped.
+
+So an idle empty pane reads at once; a busy pane reads when its turn ends; and a
+pane holding the user's half-typed text waits until they submit it. Use
+`--silent` to skip the nudge entirely, or `--force-nudge` to send a keystroke
+regardless (can clobber — avoid).
 
 ```bash
-pane-msg send 4later:1.2 --type task --ref 4711 "Self-contained brief…"   # queue; delivered on its next turn
-pane-msg send 4later:1.2 --type task --ref 4711 --nudge "…"               # also wake it now, if its prompt is clear
+pane-msg send 4later:1.2 --type task --ref 4711 "Self-contained brief…"   # guarded nudge (default)
+pane-msg send 4later:1.2 --type note --silent "FYI, no rush."             # never nudge; Stop-hook delivers
 pane-msg read      # drain your own inbox (auto-detects your pane via $TMUX_PANE)
 pane-msg status    # unread counts across all mailboxes
 ```

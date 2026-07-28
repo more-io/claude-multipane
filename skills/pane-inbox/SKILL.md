@@ -9,19 +9,21 @@ The payload of an inter-pane message is appended to the recipient's **inbox
 file**; it is NEVER typed into the recipient's input prompt. Two things deliver
 it to the recipient's Claude:
 
-1. **Stop-hook drain (default, fully promptless):** when the recipient pane
-   finishes any turn, a `Stop` hook (`~/.claude/hooks/pane-inbox-drain.sh`) reads
-   its inbox and feeds queued messages back through the hook channel — without
-   ever touching the input line. **`send` does NOT nudge by default**; every
-   message is delivered this way. The user's typing is never touched.
-   - Caveat: a fully idle pane (empty prompt, nothing running, nobody
-     interacting) never ends a turn on its own, so its Stop-hook never fires —
-     the message waits until something makes that pane run.
-2. **Guarded nudge (opt-in `--nudge`, only to cold-start an idle pane):** sends a
-   tiny `📨 read-inbox` nudge via `send-keys` **only if** the target's input line
-   is empty and Claude isn't busy. If the user is typing there, it does NOT
-   send-keys — it falls back to Stop-hook delivery. Use `--nudge` only when you
-   must wake a cold idle pane immediately.
+1. **Guarded nudge (the default).** `pane-msg send` checks the target: if it's
+   **idle with an empty input line**, it sends a tiny `📨 read-inbox` nudge via
+   `send-keys` so the pane wakes and reads the message right away. If the target
+   is **busy** or **the user is typing there**, it sends **no** nudge — so it can
+   never clobber in-progress input — and falls back to (2).
+2. **Stop-hook drain (the fallback, fully promptless).** When a pane finishes any
+   turn, a `Stop` hook (`~/.claude/hooks/pane-inbox-drain.sh`) reads its inbox and
+   feeds queued messages back through the hook channel, never touching the input
+   line. This catches anything the guarded nudge deliberately skipped.
+
+Net effect: an idle empty pane reads immediately (no user action needed); a busy
+pane reads when its turn ends; and a pane where the user has half-typed text
+waits — correctly — until the user submits or clears it, so their input is safe.
+Only edge case that truly waits for the user: an idle pane that already has
+unsubmitted text sitting in its prompt.
 
 Tool: `~/.claude/pane-msg`. Mailboxes: `~/.claude/tmux-state/mailbox/`.
 
@@ -45,15 +47,16 @@ self-contained body. Act on it as if `from` had asked you directly. To reply:
 ## Sending to another pane
 
 ```bash
-# hand off a task (payload → file; NO nudge — Stop-hook delivers on next turn)
+# hand off a task — guarded nudge by default: wakes it now if idle+empty,
+# otherwise the Stop-hook delivers on its next turn. Never clobbers input.
 ~/.claude/pane-msg send 4later:1.2 --type task --ref 4711 "Self-contained brief with file paths + context."
 
-# same, but cold-start an idle pane now (nudges only if its input is empty)
-~/.claude/pane-msg send 4later:1.2 --type task --ref 4711 --nudge "…"
-
-# question / status / note
+# question / status / note (same guarded-nudge default)
 ~/.claude/pane-msg send 4later:1.1 --type question "Which API version should the client target?"
 ~/.claude/pane-msg send 4later:1.1 --type status --ref 4711 "Done — committed <sha>, pushed branch."
+
+# --silent: never nudge, always wait for the Stop-hook (low-priority drops)
+~/.claude/pane-msg send 4later:1.2 --type note --silent "FYI, no rush."
 ```
 
 - `<target>` is a tmux target `session:window.pane` (e.g. `4later:1.2`). Resolve
@@ -62,11 +65,12 @@ self-contained body. Act on it as if `from` had asked you directly. To reply:
 - `--ref`: free-form (e.g. issue number) — keep it on replies so threads line up.
 - `--from` auto-fills with your own pane; override only if needed.
 - **Nudge control:**
-  - **default (no nudge):** append to the inbox; the Stop-hook delivers on the
-    target's next turn. Never touches the prompt. Use this almost always.
-  - `--nudge`: opt-in guarded wake for a **cold idle** pane — sends a tiny
-    read-inbox nudge, but only if the target's input line is empty (so it can't
-    clobber typing). Reach for it only when an idle pane must start work now.
+  - **default (guarded nudge):** wakes the target if it's idle with an empty
+    prompt, otherwise stays silent and lets the Stop-hook deliver. Never clobbers
+    input. This is what you want almost always — just `send`.
+  - `--silent`: never nudge; always wait for the Stop-hook. For low-priority
+    drops you don't want waking an idle pane at all.
+  - `--nudge`: explicit form of the default (guarded wake); kept for clarity.
   - `--force-nudge`: send-keys regardless — legacy/interactive only. **Avoid**;
     it can clobber the user's in-progress input.
 

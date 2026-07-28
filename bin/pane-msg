@@ -7,7 +7,7 @@
 # prompt (Nudge-Hybrid). Each pane drains its own inbox with `pane-msg read`.
 #
 # Usage:
-#   pane-msg send <target> [--type T] [--ref R] [--from F] [--nudge] <body...>
+#   pane-msg send <target> [--type T] [--ref R] [--from F] [--silent] <body...>
 #   pane-msg read  [<self-target>]     # print+consume unread (auto-detects self)
 #   pane-msg peek  [<self-target>]     # print unread WITHOUT consuming
 #   pane-msg status                    # unread counts across all mailboxes
@@ -16,12 +16,13 @@
 #   <target> / <self-target>: a tmux target like "4later:1.2".
 #   --type:  task | question | answer | status | note   (default: note)
 #   --ref:   free-form reference, e.g. an issue number
-#   By default NO nudge is sent — the message waits in the inbox file and the
-#   recipient's Stop-hook delivers it on its next turn (never touches the prompt).
-#   --nudge:       opt-in wake for an idle pane; sends a tiny read-inbox nudge
-#                  ONLY if the target's input line is empty (won't clobber typing).
-#   --silent:      explicit default (append only, no nudge).
-#   --force-nudge: nudge even if the input has text (legacy; can clobber input).
+#   By default a GUARDED nudge is sent: if the target is idle with an EMPTY input
+#   line, a tiny read-inbox nudge wakes it so it reads immediately; if it's busy
+#   or the user is typing there, no nudge is sent and the recipient's Stop-hook
+#   delivers the message on its next turn. Either way the prompt is never clobbered.
+#   --silent:      never nudge — append only; Stop-hook delivers on next turn.
+#   --nudge:       explicit default (guarded wake); kept for clarity.
+#   --force-nudge: nudge even if the input has text (legacy; CAN clobber input).
 set -euo pipefail
 
 MB="${PANE_MSG_HOME:-$HOME/.claude/tmux-state/mailbox}"
@@ -72,9 +73,11 @@ cmd="${1:-}"; shift || true
 
 case "$cmd" in
   send)
-    # nudge modes: never (DEFAULT — pure Stop-hook delivery, never touches the
-    # prompt), auto (guarded wake: nudge only if input line is clear), force.
-    nudge_mode="never"; type="note"; ref=""; from=""
+    # nudge modes: auto (DEFAULT — guarded wake: nudge only if the target's input
+    # line is empty & it isn't busy, so it can't clobber typing; otherwise falls
+    # back to Stop-hook delivery), never (pure Stop-hook, never touches the
+    # prompt), force (nudge regardless — can clobber).
+    nudge_mode="auto"; type="note"; ref=""; from=""
     target="${1:-}"; shift || { echo "pane-msg send: missing <target>" >&2; exit 1; }
     # parse flags interleaved with body
     body_parts=()
