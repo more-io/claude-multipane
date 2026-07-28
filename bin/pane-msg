@@ -52,10 +52,14 @@ input_is_clear() {
   cap="$(tmux capture-pane -t "$target" -p 2>/dev/null)" || return 1
   # Busy? Claude shows "esc to interrupt" while working — never touch it then.
   printf '%s\n' "$cap" | grep -q 'esc to interrupt' && return 1
-  # The live input line is the last one carrying the prompt marker "❯ ".
-  line="$(printf '%s\n' "$cap" | grep '❯ ' | tail -1)"
+  # The live input line is the last one carrying the prompt marker "❯".
+  # NB: match WITHOUT the trailing space — tmux capture-pane trims trailing
+  # whitespace, so an EMPTY prompt renders as bare "❯" and the old "❯ "
+  # pattern missed exactly the one state that is safe to nudge (field find
+  # 2026-07-28: idle panes were never woken).
+  line="$(printf '%s\n' "$cap" | grep '❯' | tail -1)"
   [ -n "$line" ] || return 1        # no prompt visible → don't risk it
-  rest="${line#*❯ }"
+  rest="${line#*❯}"
   rest="$(printf '%s' "$rest" | tr -d '[:space:]')"
   [ -z "$rest" ]                    # empty after the marker → safe
 }
