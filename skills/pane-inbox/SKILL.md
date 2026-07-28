@@ -1,6 +1,6 @@
 ---
 name: pane-inbox
-description: Use this skill for file-based communication between Claude Code panes — the quiet alternative to pasting a task into another pane's input prompt, designed so it NEVER clobbers what the user is typing. Triggers — (1) you see a "📨 Queued pane-msg inbox message(s)" note (from the Stop-hook) or a "📨 pane-msg" nudge in your prompt: handle the messages; (2) you want to hand a task, question, answer, or status to another pane — phrases like "silent send to pane2", "queue for pane4", "inbox pane3", "pane-msg to pane1". Complements send-to-pane (raw send-keys) and orchestrate-panes (the protocol).
+description: THE DEFAULT AND PREFERRED WAY to send anything to another Claude Code pane — task, question, answer, or status — and to receive such messages. Writes to the recipient's inbox file instead of its input prompt, so it never clobbers what the user is typing there. ALWAYS prefer this over send-to-pane for delegating or messaging a pane. Triggered by (1) a "📨 Queued pane-msg inbox message(s)" note or "📨 pane-msg" nudge in your prompt → handle the messages; (2) ANY request to message or delegate to a pane — "send to pane2", "tell pane4", "sag pane2", "schick an pane4", "pane1 soll", "delegate/dispatch to pane", "ask pane1", "queue for pane3", "pane-msg to pane1". Only fall back to send-to-pane for raw interactive keystrokes (e.g. typing "yes" into a confirmation prompt).
 ---
 
 # Pane Inbox — file-based inter-pane messaging (never clobbers user input)

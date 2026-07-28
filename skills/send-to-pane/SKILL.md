@@ -1,6 +1,6 @@
 ---
 name: send-to-pane
-description: Use this skill when you need to send a prompt or instruction to another Claude Code instance running in a sibling tmux pane — the orchestrator handing work to a worker pane. Triggered by phrases like "send to pane2", "tell pane4", "sag pane2", "schick an pane4", "pane1 soll", or when delegating work to a colleague pane. The tmux session/window is read from panes.conf.
+description: Low-level primitive for typing raw keystrokes into another tmux pane's prompt via `tmux send-keys`. Use ONLY for genuinely interactive one-offs — e.g. typing "yes"/Enter into a pane waiting on a confirmation dialog, or driving a pane's TUI directly. DO NOT use it to hand off a task, question, answer, or status to a pane ("send to pane2", "tell pane4", "schick an pane4", "pane1 soll", delegate/dispatch): those go through the **pane-inbox** skill, which writes to the pane's inbox file and never clobbers what the user is typing. send-keys overwrites in-progress input, so reach for this only when pane-inbox genuinely can't do the job.
 ---
 
 # Send a Prompt to Another tmux Pane
