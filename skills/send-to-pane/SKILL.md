@@ -7,6 +7,15 @@ description: Use this skill when you need to send a prompt or instruction to ano
 
 Sends a text prompt to another Claude Code instance running in a parallel tmux pane — the coordination primitive for the orchestrator layout.
 
+> **Prefer the `pane-inbox` skill for task handoff, questions, and status.**
+> This skill types straight into the target's input line via `send-keys`, which
+> **clobbers whatever the user is currently typing there** and can get stuck as a
+> `[Pasted text]`. `pane-inbox` (`~/.claude/pane-msg`) writes the payload to the
+> target's inbox file and lets its Stop-hook deliver it without touching the
+> prompt. Use raw `send-keys` below only for genuinely interactive one-offs —
+> e.g. typing `yes` into a pane waiting on a confirmation, or an explicit
+> `pane-msg send … --nudge` to cold-start an idle pane.
+
 ## Target (from config)
 
 Read the current project from `~/.claude/panes.conf` — fields: `<name> <main-worktree> <main-branch> <pane-count> <tmux-target-prefix>`. The `<tmux-target-prefix>` is `<session>:<window>` (e.g. `xyz:1`). Pane **N** is then `<session>:<window>.N`, i.e. `xyz:1.2` for pane 2.

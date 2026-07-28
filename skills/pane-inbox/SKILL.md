@@ -1,0 +1,92 @@
+---
+name: pane-inbox
+description: Use this skill for file-based communication between Claude Code panes — the quiet alternative to pasting a task into another pane's input prompt, designed so it NEVER clobbers what the user is typing. Triggers — (1) you see a "📨 Queued pane-msg inbox message(s)" note (from the Stop-hook) or a "📨 pane-msg" nudge in your prompt: handle the messages; (2) you want to hand a task, question, answer, or status to another pane — phrases like "silent send to pane2", "queue for pane4", "inbox pane3", "pane-msg to pane1". Complements send-to-pane (raw send-keys) and orchestrate-panes (the protocol).
+---
+
+# Pane Inbox — file-based inter-pane messaging (never clobbers user input)
+
+The payload of an inter-pane message is appended to the recipient's **inbox
+file**; it is NEVER typed into the recipient's input prompt. Two things deliver
+it to the recipient's Claude:
+
+1. **Stop-hook drain (default, fully promptless):** when the recipient pane
+   finishes any turn, a `Stop` hook (`~/.claude/hooks/pane-inbox-drain.sh`) reads
+   its inbox and feeds queued messages back through the hook channel — without
+   ever touching the input line. **`send` does NOT nudge by default**; every
+   message is delivered this way. The user's typing is never touched.
+   - Caveat: a fully idle pane (empty prompt, nothing running, nobody
+     interacting) never ends a turn on its own, so its Stop-hook never fires —
+     the message waits until something makes that pane run.
+2. **Guarded nudge (opt-in `--nudge`, only to cold-start an idle pane):** sends a
+   tiny `📨 read-inbox` nudge via `send-keys` **only if** the target's input line
+   is empty and Claude isn't busy. If the user is typing there, it does NOT
+   send-keys — it falls back to Stop-hook delivery. Use `--nudge` only when you
+   must wake a cold idle pane immediately.
+
+Tool: `~/.claude/pane-msg`. Mailboxes: `~/.claude/tmux-state/mailbox/`.
+
+## When you receive messages
+
+Either the Stop-hook injects `📨 Queued pane-msg inbox message(s) … :` followed
+by the message bodies (already consumed for you — just act on them), or you see
+a `📨 pane-msg: run pane-msg read …` nudge in your prompt, in which case run:
+
+```bash
+~/.claude/pane-msg read      # auto-detects your pane, prints unread, marks consumed
+```
+
+Each message shows `type`, `from`, optional `ref`, timestamp, and a
+self-contained body. Act on it as if `from` had asked you directly. To reply:
+
+```bash
+~/.claude/pane-msg send <from-target> --type answer --ref <ref> "your answer"
+```
+
+## Sending to another pane
+
+```bash
+# hand off a task (payload → file; NO nudge — Stop-hook delivers on next turn)
+~/.claude/pane-msg send 4later:1.2 --type task --ref 4711 "Self-contained brief with file paths + context."
+
+# same, but cold-start an idle pane now (nudges only if its input is empty)
+~/.claude/pane-msg send 4later:1.2 --type task --ref 4711 --nudge "…"
+
+# question / status / note
+~/.claude/pane-msg send 4later:1.1 --type question "Which API version should the client target?"
+~/.claude/pane-msg send 4later:1.1 --type status --ref 4711 "Done — committed <sha>, pushed branch."
+```
+
+- `<target>` is a tmux target `session:window.pane` (e.g. `4later:1.2`). Resolve
+  from `~/.claude/panes.conf` like send-to-pane; pane **N** → `<prefix>.N`.
+- `--type`: `task | question | answer | status | note` (default `note`).
+- `--ref`: free-form (e.g. issue number) — keep it on replies so threads line up.
+- `--from` auto-fills with your own pane; override only if needed.
+- **Nudge control:**
+  - **default (no nudge):** append to the inbox; the Stop-hook delivers on the
+    target's next turn. Never touches the prompt. Use this almost always.
+  - `--nudge`: opt-in guarded wake for a **cold idle** pane — sends a tiny
+    read-inbox nudge, but only if the target's input line is empty (so it can't
+    clobber typing). Reach for it only when an idle pane must start work now.
+  - `--force-nudge`: send-keys regardless — legacy/interactive only. **Avoid**;
+    it can clobber the user's in-progress input.
+
+## Why this over raw send-keys (send-to-pane)
+
+- **Never clobbers the user's input** — the payload never goes to the prompt, and
+  the optional nudge is suppressed whenever the user is typing.
+- **No stuck paste** — long/multi-line/quoted bodies live in the file.
+- **Audit trail** — one JSON line per message in `mailbox/<key>.inbox.jsonl`;
+  `pane-msg status` shows unread counts.
+- **Structured** — `type`/`ref` route answers back to the right thread.
+
+Use raw **send-to-pane** only for genuinely interactive one-offs (e.g. typing
+`yes` into a pane waiting on a confirmation). Use **pane-inbox** for task
+handoff, questions, and status.
+
+## Housekeeping
+
+- `pane-msg status` — unread counts across all mailboxes.
+- `pane-msg peek [<target>]` — show unread WITHOUT consuming.
+- `pane-msg whoami` — your own tmux target (via `$TMUX_PANE`).
+- Inbox files are append-only JSONL; `<key>.offset` tracks what's read. Delete
+  the offset to re-show; delete the `.inbox.jsonl` to clear history.

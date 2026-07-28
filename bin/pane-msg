@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# pane-msg — file-based inter-pane messaging for the claude-multipane setup.
+#
+# Instead of pasting a whole task into another pane's input prompt (which gets
+# stuck as "[Pasted text #N]" and leaves no trail), the payload is appended to
+# the recipient's inbox file and only a tiny "read-inbox" nudge is sent to its
+# prompt (Nudge-Hybrid). Each pane drains its own inbox with `pane-msg read`.
+#
+# Usage:
+#   pane-msg send <target> [--type T] [--ref R] [--from F] [--nudge] <body...>
+#   pane-msg read  [<self-target>]     # print+consume unread (auto-detects self)
+#   pane-msg peek  [<self-target>]     # print unread WITHOUT consuming
+#   pane-msg status                    # unread counts across all mailboxes
+#   pane-msg whoami                    # this pane's tmux target
+#
+#   <target> / <self-target>: a tmux target like "4later:1.2".
+#   --type:  task | question | answer | status | note   (default: note)
+#   --ref:   free-form reference, e.g. an issue number
+#   By default NO nudge is sent — the message waits in the inbox file and the
+#   recipient's Stop-hook delivers it on its next turn (never touches the prompt).
+#   --nudge:       opt-in wake for an idle pane; sends a tiny read-inbox nudge
+#                  ONLY if the target's input line is empty (won't clobber typing).
+#   --silent:      explicit default (append only, no nudge).
+#   --force-nudge: nudge even if the input has text (legacy; can clobber input).
+set -euo pipefail
+
+MB="${PANE_MSG_HOME:-$HOME/.claude/tmux-state/mailbox}"
+mkdir -p "$MB"
+
+# tmux target ("4later:1.2") -> mailbox key ("4later_1_2")
+key_of() { printf '%s' "$1" | tr ':.' '__'; }
+
+self_target() {
+  local t
+  # $TMUX_PANE is the unique id of the pane THIS process runs in — reliable even
+  # when the attached client is looking at a different pane. Prefer it over a
+  # target-less display-message (which resolves to the client's *active* pane).
+  if [ -n "${TMUX_PANE:-}" ]; then
+    t="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)" \
+      && [ -n "$t" ] && { printf '%s' "$t"; return; }
+  fi
+  t="$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)" \
+    && [ -n "$t" ] && { printf '%s' "$t"; return; }
+  echo "pane-msg: not inside tmux — pass an explicit target" >&2; exit 1
+}
+
+# Return 0 only if it is SAFE to type into the target's prompt: Claude not busy
+# AND the input line is empty (so we can't clobber what the user is typing).
+input_is_clear() {
+  local target="$1" cap line rest
+  cap="$(tmux capture-pane -t "$target" -p 2>/dev/null)" || return 1
+  # Busy? Claude shows "esc to interrupt" while working — never touch it then.
+  printf '%s\n' "$cap" | grep -q 'esc to interrupt' && return 1
+  # The live input line is the last one carrying the prompt marker "❯ ".
+  line="$(printf '%s\n' "$cap" | grep '❯ ' | tail -1)"
+  [ -n "$line" ] || return 1        # no prompt visible → don't risk it
+  rest="${line#*❯ }"
+  rest="$(printf '%s' "$rest" | tr -d '[:space:]')"
+  [ -z "$rest" ]                    # empty after the marker → safe
+}
+
+nudge() {
+  local target="$1"
+  # Minimal wake trigger — payload stays in the inbox file. Only ever sent when
+  # input_is_clear() confirmed the line is empty. Two Enters per send-to-pane.
+  tmux send-keys -t "$target" -l '📨 pane-msg: run `pane-msg read` and handle the queued message(s)'
+  tmux send-keys -t "$target" Enter
+  tmux send-keys -t "$target" Enter
+}
+
+cmd="${1:-}"; shift || true
+
+case "$cmd" in
+  send)
+    # nudge modes: never (DEFAULT — pure Stop-hook delivery, never touches the
+    # prompt), auto (guarded wake: nudge only if input line is clear), force.
+    nudge_mode="never"; type="note"; ref=""; from=""
+    target="${1:-}"; shift || { echo "pane-msg send: missing <target>" >&2; exit 1; }
+    # parse flags interleaved with body
+    body_parts=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --nudge)       nudge_mode="auto";  shift;;   # opt-in: wake an idle pane, but only if its input is clear
+        --silent)      nudge_mode="never"; shift;;   # explicit default: append only, Stop-hook delivers
+        --force-nudge) nudge_mode="force"; shift;;   # nudge even if input has text (legacy; can clobber)
+        --type)   type="${2:-note}"; shift 2;;
+        --ref)    ref="${2:-}"; shift 2;;
+        --from)   from="${2:-}"; shift 2;;
+        *)        body_parts+=("$1"); shift;;
+      esac
+    done
+    [ -n "$from" ] || from="$(self_target 2>/dev/null || echo unknown)"
+    body="${body_parts[*]:-}"
+    [ -n "$body" ] || { echo "pane-msg send: empty body" >&2; exit 1; }
+
+    key="$(key_of "$target")"
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # Safe JSON encoding via python3.
+    line="$(FROM="$from" TO="$target" TYPE="$type" REF="$ref" TS="$ts" BODY="$body" \
+      python3 -c 'import json,os; print(json.dumps({k.lower():os.environ[k] for k in ("FROM","TO","TYPE","REF","TS","BODY")}))')"
+    printf '%s\n' "$line" >> "$MB/$key.inbox.jsonl"
+
+    case "$nudge_mode" in
+      never)
+        echo "queued → $target (no nudge; delivered on target's next turn via Stop-hook)"
+        ;;
+      force)
+        nudge "$target"
+        echo "queued + nudged (forced) → $target"
+        ;;
+      auto)
+        if input_is_clear "$target"; then
+          nudge "$target"
+          echo "queued + nudged → $target (input was clear)"
+        else
+          echo "queued → $target (input busy/typing — NOT nudged; Stop-hook delivers on its next turn)"
+        fi
+        ;;
+    esac
+    ;;
+
+  read|peek)
+    target="${1:-$(self_target)}"
+    key="$(key_of "$target")"
+    inbox="$MB/$key.inbox.jsonl"
+    off="$MB/$key.offset"
+    [ -f "$inbox" ] || { echo "(inbox empty)"; exit 0; }
+    start=0; [ -f "$off" ] && start="$(cat "$off")"
+    total="$(wc -l < "$inbox" | tr -d ' ')"
+    if [ "$start" -ge "$total" ]; then echo "(no new messages)"; exit 0; fi
+    # Pretty-print unread lines.
+    tail -n +"$((start+1))" "$inbox" | python3 -c '
+import sys, json
+for i, l in enumerate(sys.stdin, 1):
+    l = l.strip()
+    if not l:
+        continue
+    m = json.loads(l)
+    typ = m.get("type", "note")
+    frm = m.get("from", "?")
+    ts = m.get("ts", "")
+    ref = m.get("ref", "")
+    refstr = " ref=" + ref if ref else ""
+    print("── #%d [%s] from %s%s  %s" % (i, typ, frm, refstr, ts))
+    print(m.get("body", ""))
+    print()
+'
+    if [ "$cmd" = "read" ]; then printf '%s' "$total" > "$off"; fi
+    ;;
+
+  status)
+    shopt -s nullglob
+    any=0
+    for inbox in "$MB"/*.inbox.jsonl; do
+      any=1
+      key="$(basename "$inbox" .inbox.jsonl)"
+      off="$MB/$key.offset"; start=0; [ -f "$off" ] && start="$(cat "$off")"
+      total="$(wc -l < "$inbox" | tr -d ' ')"
+      unread=$((total-start))
+      printf '%-16s %s unread (%s total)\n' "$key" "$unread" "$total"
+    done
+    [ "$any" -eq 1 ] || echo "(no mailboxes yet)"
+    ;;
+
+  whoami) self_target ;;
+
+  *)
+    grep '^#' "$0" | sed 's/^# \{0,1\}//' | sed '1d'
+    exit 1
+    ;;
+esac
