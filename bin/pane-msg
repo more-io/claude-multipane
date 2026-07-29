@@ -86,9 +86,16 @@ input_is_clear() {
 nudge() {
   local target="$1"
   # Minimal wake trigger — payload stays in the inbox file. Only ever sent when
-  # input_is_clear() confirmed the line is empty. Two Enters per send-to-pane.
+  # input_is_clear() confirmed the line is empty.
   tmux send-keys -t "$target" -l '📨 pane-msg: run `pane-msg read` and handle the queued message(s)'
+  # Claude Code's input needs a beat between pasted text and Enter — an Enter
+  # racing the paste gets swallowed and the nudge sits unsubmitted (field find
+  # 2026-07-29, Tobias had to press Enter by hand). Two spaced Enters: the
+  # first submits; the second is a no-op on the then-empty prompt but rescues
+  # the case where the first still arrived too early.
+  sleep 0.4
   tmux send-keys -t "$target" Enter
+  sleep 0.4
   tmux send-keys -t "$target" Enter
 }
 
