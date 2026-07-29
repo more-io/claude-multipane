@@ -84,10 +84,13 @@ input_is_clear() {
 }
 
 nudge() {
-  local target="$1"
+  local target="$1" from="${2:-}"
   # Minimal wake trigger — payload stays in the inbox file. Only ever sent when
-  # input_is_clear() confirmed the line is empty.
-  tmux send-keys -t "$target" -l '📨 pane-msg: run `pane-msg read` and handle the queued message(s)'
+  # input_is_clear() confirmed the line is empty. Name the sender (if known) so
+  # the pane — and whoever is watching it — sees WHO messaged before reading.
+  local head='📨 pane-msg'
+  [ -n "$from" ] && head="📨 pane-msg from ${from}"
+  tmux send-keys -t "$target" -l "${head}: run 'pane-msg read' and handle the queued message(s)"
   # Claude Code's input needs a beat between pasted text and Enter — an Enter
   # racing the paste gets swallowed and the nudge sits unsubmitted (field find
   # 2026-07-29, Tobias had to press Enter by hand). Two spaced Enters: the
@@ -142,12 +145,12 @@ case "$cmd" in
         echo "queued → $target (no send-time nudge; watcher / its Stop-hook will deliver)"
         ;;
       force)
-        nudge "$target"
+        nudge "$target" "$from"
         echo "queued + nudged (forced) → $target"
         ;;
       auto)
         if input_is_clear "$target"; then
-          nudge "$target"
+          nudge "$target" "$from"
           echo "queued + nudged → $target (input was clear)"
         else
           echo "queued → $target (not nudged — you're viewing it, or it's busy/in a menu; its Stop-hook / the watcher delivers)"
@@ -191,8 +194,23 @@ try: print(json.loads(sys.stdin.readline()).get("to",""))
 except Exception: print("")' 2>/dev/null)"
         [ -n "$target" ] || continue
         if input_is_clear "$target"; then
-          nudge "$target"
-          wlog "nudged $target ($((total-start)) unread)"
+          # Distinct senders of the unread messages → shown in the nudge line.
+          senders="$(tail -n +"$((start+1))" "$inbox" | python3 -c '
+import sys, json
+seen = []
+for l in sys.stdin:
+    l = l.strip()
+    if not l:
+        continue
+    try:
+        f = json.loads(l).get("from", "")
+    except Exception:
+        f = ""
+    if f and f not in seen:
+        seen.append(f)
+print(", ".join(seen))' 2>/dev/null)"
+          nudge "$target" "$senders"
+          wlog "nudged $target ($((total-start)) unread) from ${senders:-?}"
         else
           wlog "skip $target (busy/typing, $((total-start)) unread)"
         fi
