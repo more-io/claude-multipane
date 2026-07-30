@@ -31,6 +31,27 @@ mkdir -p "$MB"
 # tmux target ("4later:1.2") -> mailbox key ("4later_1_2")
 key_of() { printf '%s' "$1" | tr ':.' '__'; }
 
+# Does <target> name a pane that actually exists right now?
+# Delivery happens through the TARGET PANE's Stop-hook, so a mailbox whose pane
+# doesn't exist is a file nobody will ever read. `key_of` happily turns any
+# string into a filename, which is how a shorthand like "pane1" (instead of
+# "4later:1.1") becomes a silent black hole: the send reports success, the file
+# grows, and nothing delivers it.
+# NOTE: `tmux display-message -t <bogus>` EXITS 0 and prints an empty value
+# rather than failing — so the exit code cannot be trusted here. The pane_id
+# itself is the only honest signal: non-empty means the target resolved.
+target_exists() {
+  local id
+  id="$(tmux display-message -p -t "$1" '#{pane_id}' 2>/dev/null)" || return 1
+  [ -n "$id" ]
+}
+
+# Live panes as targets, one per line — used to make a rejection helpful
+# instead of merely strict.
+live_targets() {
+  tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null
+}
+
 self_target() {
   local t
   # $TMUX_PANE is the unique id of the pane THIS process runs in — reliable even
@@ -110,7 +131,7 @@ case "$cmd" in
     # line is empty & it isn't busy, so it can't clobber typing; otherwise falls
     # back to Stop-hook delivery), never (pure Stop-hook, never touches the
     # prompt), force (nudge regardless — can clobber).
-    nudge_mode="auto"; type="note"; ref=""; from=""
+    nudge_mode="auto"; type="note"; ref=""; from=""; force_target="no"
     target="${1:-}"; shift || { echo "pane-msg send: missing <target>" >&2; exit 1; }
     # parse flags interleaved with body
     body_parts=()
@@ -119,6 +140,7 @@ case "$cmd" in
         --nudge)       nudge_mode="auto";  shift;;   # opt-in: wake an idle pane, but only if its input is clear
         --silent)      nudge_mode="never"; shift;;   # explicit default: append only, Stop-hook delivers
         --force-nudge) nudge_mode="force"; shift;;   # nudge even if input has text (legacy; can clobber)
+        --force-target) force_target="yes"; shift;;  # queue even if the pane isn't live (it's about to restart)
         --type)   type="${2:-note}"; shift 2;;
         --ref)    ref="${2:-}"; shift 2;;
         --from)   from="${2:-}"; shift 2;;
@@ -128,6 +150,26 @@ case "$cmd" in
     [ -n "$from" ] || from="$(self_target 2>/dev/null || echo unknown)"
     body="${body_parts[*]:-}"
     [ -n "$body" ] || { echo "pane-msg send: empty body" >&2; exit 1; }
+
+    # Refuse to write into a mailbox no pane will ever drain. The message would
+    # be appended, "queued → <target>" printed, and nothing would happen — the
+    # failure mode that cost three messages 21 hours on 2026-07-30. `--force`
+    # stays for the deliberate case (buffering for a pane about to restart).
+    if [ "$force_target" != "yes" ] && ! target_exists "$target"; then
+      {
+        echo "pane-msg send: '$target' is not a live pane — refusing to queue."
+        echo "  Delivery runs through the TARGET's Stop-hook, so this mailbox"
+        echo "  would never be drained and the send would look like it worked."
+        near="$(live_targets | grep -iF "${target##*[:._]}" || true)"
+        if [ -n "$near" ]; then
+          echo "  Did you mean:"; printf '    %s\n' $near
+        else
+          echo "  Live panes:"; live_targets | sed 's/^/    /'
+        fi
+        echo "  Deliberate (target restarting)? re-run with --force-target."
+      } >&2
+      exit 1
+    fi
 
     key="$(key_of "$target")"
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
