@@ -47,6 +47,19 @@ else
     short_dir="~"
 fi
 
+# Optional: trim noisy path prefixes from the dir segment. List them in
+# ~/.claude/statusline-trim-prefixes, one per line in ~-notation (e.g.
+# "~/Documents/Xcode/"), comments with #. A pane living under such a prefix
+# then shows just "fourlater_pane3" instead of the full path.
+trim_file="$HOME/.claude/statusline-trim-prefixes"
+if [ -f "$trim_file" ]; then
+    while IFS= read -r prefix; do
+        case "$prefix" in ''|'#'*) continue ;; esac
+        short_dir="${short_dir/#$prefix/}"
+    done < "$trim_file"
+    [ -n "$short_dir" ] || short_dir="~"
+fi
+
 # Get git branch (skip optional locks to avoid stalling)
 is_worktree=false
 if git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
