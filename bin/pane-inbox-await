@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# pane-inbox-await — block until this pane's pane-msg inbox has unread mail,
+# then exit. Wakes a Claude pane that the terminal channel cannot reach.
+#
+# WHY THIS EXISTS
+# ---------------
+# pane-msg has two delivery channels, and BOTH are blind to one specific pane:
+#
+#   1. The Stop hook drains the inbox at the end of a turn. A pane sitting idle
+#      never ends a turn, so it never drains.
+#   2. The guarded nudge types a wake line into the pane. But input_is_clear()
+#      refuses outright for "the pane a human is CURRENTLY VIEWING" — and that
+#      refusal is deliberate and correct: typing into someone's live prompt
+#      while they read (or the TTS is speaking) is exactly what it prevents.
+#
+# The human-watched pane is normally the ORCHESTRATOR, which is also the pane
+# that spends the most time idle waiting for replies. So its mail lands, the
+# sweeper logs "skip (busy/typing)" every 10 s until its window elapses, and the
+# message then waits for the human to type something. Measured 06.08.2026: every
+# report from four working panes sat unread until the human poked the session by
+# hand — the sweeper log shows `skip <pane> (busy/typing, 1 unread)` ten
+# times in a row, then `sweep window elapsed`.
+#
+# Note the misleading label: nothing was busy and nobody was typing. The guard
+# short-circuits on pane_active+window_active+session_attached ("111") before it
+# ever looks at the input line, and reports that as "busy/typing".
+#
+# This tool is the third channel, and the only one that reaches that pane
+# WITHOUT touching the terminal: run it as a background task from the pane
+# itself. When it exits, the agent harness re-invokes the pane — which ends a
+# turn, which runs the Stop hook, which drains the inbox. The terminal is never
+# written to, so the reason the nudge was refused does not apply.
+#
+# It deliberately does NOT consume the messages: draining stays the Stop hook's
+# job, so there is exactly one reader and no way for the two to disagree about
+# what has been seen.
+#
+# Usage:
+#   pane-inbox-await                        # auto-detect self, 1 h timeout
+#   pane-inbox-await --timeout 1800         # shorter window
+#   pane-inbox-await mysession:1.1          # explicit target
+#
+# Exit code is 0 on BOTH paths (mail found / window elapsed). A non-zero exit
+# would read as a failed task and invite someone to "fix" a timeout that is the
+# normal quiet case.
+set -euo pipefail
+
+MB="$HOME/.claude/tmux-state/mailbox"
+timeout=3600
+interval=20
+target=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --timeout) timeout="$2"; shift 2 ;;
+    --interval) interval="$2"; shift 2 ;;
+    -h|--help) sed -n '1,45p' "$0"; exit 0 ;;
+    *) target="$1"; shift ;;
+  esac
+done
+
+# Identify this pane STRICTLY from $TMUX_PANE, the unique id of the pane this
+# process runs in — never from the client's ACTIVE pane, which would watch the
+# wrong mailbox the moment the human switches panes.
+if [ -z "$target" ]; then
+  [ -n "${TMUX_PANE:-}" ] || { echo "pane-inbox-await: not inside tmux and no target given"; exit 0; }
+  target="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)"
+  [ -n "$target" ] || { echo "pane-inbox-await: could not resolve own pane"; exit 0; }
+fi
+
+# Mailbox key: the target with separators flattened, matching pane-msg.
+key="$(printf '%s' "$target" | tr ':.' '__')"
+inbox="$MB/$key.inbox.jsonl"
+offset="$MB/$key.offset"
+
+# Unread is computed EXACTLY as pane-msg's sweeper computes it (line count minus
+# the read offset). Two different arithmetics over the same files would drift,
+# and the drift would look like a delivery bug.
+unread_count() {
+  local total=0 start=0
+  [ -f "$inbox" ] && total="$(wc -l < "$inbox" | tr -d ' ')"
+  [ -f "$offset" ] && start="$(cat "$offset" 2>/dev/null || echo 0)"
+  echo $(( total - start ))
+}
+
+deadline=$(( $(date +%s) + timeout ))
+
+# Check BEFORE the first sleep: mail that arrived while the previous turn was
+# still running is the common case, and sleeping on it would add a whole
+# interval of silence for no reason.
+while :; do
+  n="$(unread_count)"
+  if [ "$n" -gt 0 ]; then
+    echo "📨 $n unread message(s) waiting for $target — run 'pane-msg read' (the Stop hook will also drain them)."
+    exit 0
+  fi
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "pane-inbox-await: no mail for $target within ${timeout}s — re-arm if still waiting on a pane."
+    exit 0
+  fi
+  sleep "$interval"
+done

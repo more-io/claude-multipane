@@ -34,11 +34,27 @@ case "$msgs" in
 esac
 log "$self DRAINED $(printf '%s' "$msgs" | grep -c '^── ') message(s)"
 
+# If THIS pane is the one a human is viewing, it has no automatic wake-up: the
+# guarded nudge refuses it by design and an idle pane never reaches another Stop.
+# So the messages just drained would have been the LAST ones delivered on their
+# own — the next reply waits for the human to type. Re-arm the background waiter
+# while we are here.
+#
+# This rides on the drain, which only happens when there WAS mail, so it can
+# never turn into a per-turn nag or a stop loop. It stays silent once a waiter
+# is running.
+extra=""
+flags="$(tmux display-message -p -t "$self" '#{pane_active}#{window_active}#{?session_attached,1,0}' 2>/dev/null || true)"
+if [ "$flags" = "111" ] && ! pgrep -f "pane-inbox-await" >/dev/null 2>&1; then
+  extra=$'\n\n⚠️  No wake-up channel is armed for this pane. You are the pane the human is viewing, so a nudge is refused by design, and an idle pane never runs this hook again — the next reply would sit unread until the human types. Re-arm it as a BACKGROUND task now: pane-inbox-await'
+fi
+
 # Block the stop and hand the messages to Claude to handle, then continue.
-MSGS="$msgs" python3 -c '
+MSGS="$msgs" EXTRA="$extra" python3 -c '
 import json, os
 print(json.dumps({
     "decision": "block",
-    "reason": "📨 Queued pane-msg inbox message(s) arrived — handle them now, then continue:\n\n" + os.environ["MSGS"],
+    "reason": "📨 Queued pane-msg inbox message(s) arrived — handle them now, then continue:\n\n"
+              + os.environ["MSGS"] + os.environ.get("EXTRA", ""),
 }))
 '
