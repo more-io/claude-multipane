@@ -1,9 +1,22 @@
 ---
 name: pane-inbox
-description: THE DEFAULT AND PREFERRED WAY to send anything to another Claude Code pane — task, question, answer, or status — and to receive such messages. Writes to the recipient's inbox file instead of its input prompt, so it never clobbers what the user is typing there. ALWAYS prefer this over send-to-pane for delegating or messaging a pane. Triggered by (1) a "📨 Queued pane-msg inbox message(s)" note or "📨 pane-msg" nudge in your prompt → handle the messages; (2) ANY request to message or delegate to a pane — "send to pane2", "tell pane4", "sag pane2", "schick an pane4", "pane1 soll", "delegate/dispatch to pane", "ask pane1", "queue for pane3", "pane-msg to pane1". Only fall back to send-to-pane for raw interactive keystrokes (e.g. typing "yes" into a confirmation prompt).
+description: FALLBACK messaging channel between Claude Code panes. FIRST CHOICE is Claude Code's NATIVE cross-session messaging — the built-in SendMessage/ListAgents tools (v2.1.224+, macOS/Linux) deliver between sessions and WAKE idle panes by starting a new turn, with no hook or watcher. Use THIS skill's file-based pane-msg only when native messaging is unavailable (no SendMessage tool, /list-agents unknown, provider without the feature) or when the JSONL audit trail is explicitly wanted. Triggered by (1) a "📨 Queued pane-msg inbox message(s)" note or "📨 pane-msg" nudge in your prompt → handle the messages; (2) a request to message a pane when native messaging is not available. Only fall back to send-to-pane for raw interactive keystrokes (e.g. typing "yes" into a confirmation prompt).
 ---
 
 # Pane Inbox — file-based inter-pane messaging (never clobbers user input)
+
+> **⚠️ Superseded for most uses by native cross-session messaging.** Since
+> Claude Code v2.1.224 (macOS/Linux), sessions can message each other directly
+> via the built-in `SendMessage` tool, discovered with `ListAgents` /
+> `/list-agents`: delivery lands between tool calls in a busy session and
+> **starts a new turn in an idle one** — the exact wake-a-sleeping-pane problem
+> this skill's nudge/watcher machinery works around. Prefer native messaging
+> whenever the tools exist. First-contact quirk: the bare session name may not
+> resolve until you have listed it — send once with the `name [ref]` from
+> `ListAgents` (a failed send names the right ref). Docs:
+> https://code.claude.com/docs/en/cross-session-messaging.md
+> Everything below remains the FALLBACK: older Claude Code, providers without
+> the feature, or when the mailbox JSONL audit trail is wanted.
 
 The payload of an inter-pane message is appended to the recipient's **inbox
 file**; it is NEVER typed into the recipient's input prompt. Two things deliver

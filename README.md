@@ -25,7 +25,7 @@ The status line is the visible part; the point is the workflow: you keep N Claud
 - **`skills/`** — [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) (task-specific instruction files Claude loads on demand) for the orchestrator layout, all config-driven from `panes.conf`:
   - **`orchestrate-panes`** — the full operating protocol for the coordinating pane: dispatch briefs, ping-back rule, independent verification, central merge/close, capacity handover. The distilled lessons from running this daily.
   - **`send-to-pane`** — hand a self-contained task to another pane's Claude ("tell pane2 …") via raw `send-keys`. Kept for interactive one-offs; for real task handoff prefer `pane-inbox`.
-  - **`pane-inbox`** — file-based messaging between panes that never clobbers the user's input (see [below](#inter-pane-messaging-pane-inbox)). The preferred channel for task handoff, questions, answers, and status.
+  - **`pane-inbox`** — file-based messaging between panes that never clobbers the user's input (see [below](#inter-pane-messaging-pane-inbox)). Now the **fallback** channel: Claude Code's native cross-session messaging is preferred where available.
   - **`merge-to-develop`** — merge the current worktree's branch into the integration branch (in its own worktree, via `git -C`).
   - **`sync-panes-with-develop`** — bring every pane worktree up to date with the integration branch, reporting per-pane status.
   - **`focus-worktree`** — reset the status line's cross-worktree "→" hint back to the pane you actually want to work in.
@@ -102,6 +102,18 @@ Two feeders, both local and fast (no per-render network calls):
 Because the state is keyed by **worktree basename**, every pane reads its own value.
 
 ## Inter-pane messaging (`pane-inbox`)
+
+> **⚠️ Largely superseded by Claude Code's native [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging.md)**
+> (v2.1.224+, macOS/Linux): sessions discover each other with `ListAgents` /
+> `/list-agents` and message via the built-in `SendMessage` tool — delivery
+> lands between tool calls in a busy session and **starts a new turn in an
+> idle one**, which is exactly the wake-a-sleeping-pane problem the machinery
+> below works around. If your setup has it, use it; the `orchestrate-panes`
+> skill now prefers it. The layer below remains useful as a **fallback**
+> (older Claude Code, providers without the feature) and for its JSONL audit
+> trail per mailbox. One native-messaging quirk worth knowing: a first-contact
+> send needs the `name [ref]` form from `ListAgents` — a bare-name miss fails
+> loudly and names the right ref.
 
 The obvious way to hand work between panes is `tmux send-keys` into the target's
 input line (that's `send-to-pane`). It has two problems: it **overwrites whatever

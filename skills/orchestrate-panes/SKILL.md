@@ -32,13 +32,16 @@ Read the current project from `~/.claude/panes.conf` — fields:
    integration branch and re-verify on top before it finishes.
 3. **Workers must ping back — there is no automatic notification.** A worker
    pane finishing does NOT wake the orchestrator. Every dispatch must include
-   the standing instruction: "when done, blocked, or needing a decision, ping
-   the orchestrator via `pane-msg send <prefix>.1 --type status --ref <issue#>
-   --nudge '<status>'` (the `--nudge` wakes the orchestrator but only if its
-   input line is empty, so it can't clobber the user's typing; if it isn't
-   empty, the orchestrator's Stop-hook delivers it on its next turn) — never
-   wait silently." Raw `tmux send-keys -t <prefix>.1 -l '<status>'` + a separate
-   Enter is the fallback for interactive one-offs.
+   the standing instruction: "when done, blocked, or needing a decision,
+   message the orchestrator — never wait silently." **Preferred channel:
+   native cross-session messaging** (`SendMessage` to the orchestrator's
+   session name from `ListAgents`; a message to an idle session starts a new
+   turn there, so it genuinely wakes the orchestrator). Include the
+   orchestrator's `name [ref]` in the brief — a first-contact send with the
+   bare name can fail until the worker has listed it (the error names the
+   right ref). Fallbacks, in order: `pane-msg send <prefix>.1 --type status
+   --ref <issue#> --nudge '<status>'` (file inbox + guarded nudge), then raw
+   `tmux send-keys` for interactive one-offs.
 4. **Only the orchestrator merges / pushes / closes / deploys.** Workers
    commit on their own branch and stop. This serializes integration and
    avoids merge races.
@@ -64,13 +67,14 @@ Read the current project from `~/.claude/panes.conf` — fields:
    what: `printf '<issue#>' > /tmp/claude-current-issue-<worktree-basename>.txt`
    (clear with `rm -f` on completion — the tracking hook usually clears it
    when the pane itself closes the issue).
-3. Send a SELF-CONTAINED brief via the **`pane-inbox` skill** (preferred):
-   `pane-msg send <prefix>.N --type task --ref <issue#> "<brief>"`. The payload
-   goes to the worker's inbox file and its Stop-hook delivers it — this never
-   clobbers input the user may be typing in that pane, and the whole brief can't
-   get stuck as a `[Pasted text]`. Add `--nudge` only if the worker is a cold
-   idle pane you need to start *now* (it fires a send-keys wake only when that
-   pane's input line is empty). Fall back to raw send-to-pane (two-step
+3. Send a SELF-CONTAINED brief. **Preferred: native cross-session messaging**
+   — `SendMessage` to the worker's session name from `ListAgents` (first
+   contact needs the `name [ref]` form; the error on a bare-name miss tells
+   you the ref). It delivers between tool calls in a busy worker and starts a
+   new turn in an idle one — no nudge, no watcher, no clobbered input.
+   Fallback where native messaging is unavailable: the **`pane-inbox` skill**
+   (`pane-msg send <prefix>.N --type task --ref <issue#> "<brief>"`, add
+   `--nudge` only to cold-start an idle pane now); raw send-to-pane (two-step
    send-keys) only for interactive one-offs. The worker has none of your
    context. Include:
    - issue number + one-line summary + any decisions already made
@@ -82,10 +86,13 @@ Read the current project from `~/.claude/panes.conf` — fields:
      CLAUDE.md mandates)
    - "commit on your branch, do NOT push/merge — the orchestrator integrates"
    - the ping-back rule (see core rule 3)
-4. After a `--nudge` (or raw send-keys), verify the pane accepted the prompt
-   (capture-pane shows activity / the issue marker) — a first Enter can land in
-   a permission dialog. For a plain no-nudge `pane-msg send`, delivery happens on
-   the worker's next turn; use `pane-msg status` to see it still queued.
+4. A native `SendMessage` reports success/failure itself — a listed peer will
+   process the message, so no capture-pane verification is needed. On the
+   pane-msg fallback: after a `--nudge` (or raw send-keys), verify the pane
+   accepted the prompt (capture-pane shows activity / the issue marker) — a
+   first Enter can land in a permission dialog. For a plain no-nudge
+   `pane-msg send`, delivery happens on the worker's next turn; use
+   `pane-msg status` to see it still queued.
 
 ## When a worker reports "done"
 
