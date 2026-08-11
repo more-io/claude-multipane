@@ -84,6 +84,15 @@ Read the current project from `~/.claude/panes.conf` — fields:
    - your project's workflow conventions (labels, reminders, release notes,
      localization, testing and review requirements — whatever your project's
      CLAUDE.md mandates)
+   - verification-cost rules, when the brief asks for tests: counter-probes
+     run ONLY the affected suite (a probe proves that ITS guard bites — the
+     full suite adds nothing to that proof and multiplies wall-clock on
+     compiled targets); probe series on the same source reuse a prebuilt test
+     bundle where the toolchain supports it (e.g. Xcode's
+     `build-for-testing` / `test-without-building`); a MULTI-commit package
+     runs affected suites per commit and the FULL suite once at the package
+     end — "full suite before committing" guards the package, not each
+     commit label.
    - "commit on your branch, do NOT push/merge — the orchestrator integrates"
    - the ping-back rule (see core rule 3)
 4. A native `SendMessage` reports success/failure itself — a listed peer will
