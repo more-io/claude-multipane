@@ -150,4 +150,12 @@ else
     output+=" $(printf '\033[31mSTT:OFF\033[0m')"
 fi
 
+# node-msg segment (#1512 in more-io/fourlater): unread waking messages,
+# alerts and dead letters of this session/host, e.g. "📨 3 · 🚨1 · ⚠ dead 2".
+# Local and read-only (~20 ms); prints nothing when there is nothing to say.
+if [ -x "$HOME/bin/node-msg-statusline" ]; then
+    nm=$("$HOME/bin/node-msg-statusline" 2>/dev/null)
+    [ -n "$nm" ] && output+=" $(printf '\033[1;31m%s\033[0m' "$nm")"
+fi
+
 printf '%s' "$output"
