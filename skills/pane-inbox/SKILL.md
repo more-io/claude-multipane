@@ -18,6 +18,16 @@ description: FALLBACK messaging channel between Claude Code panes. FIRST CHOICE 
 > Everything below remains the FALLBACK: older Claude Code, providers without
 > the feature, or when the mailbox JSONL audit trail is wanted.
 
+> **Between machines, or when you need a receipt: `node-msg`.** If the setup has
+> `node-msg` (a private multi-host companion, not part of this repo; check with
+> `command -v node-msg`), use it for anything that crosses hosts or needs a
+> delivered/read/done receipt: `node-msg send <session-name> --type task|alert|info "…"`,
+> then `node-msg read` / `ack <id> done "…"`. `pane-msg` remains for tmux panes
+> on the same host. When you use `pane-msg`: the target is a **tmux target**
+> (`4later:1.1`), never a Claude session name (`project:pane1`), and run at most
+> **one** `pane-inbox-await` per pane (it holds a per-target lock; a second one
+> exits).
+
 The payload of an inter-pane message is appended to the recipient's **inbox
 file**; it is NEVER typed into the recipient's input prompt. Two things deliver
 it to the recipient's Claude:

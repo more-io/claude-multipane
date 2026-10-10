@@ -115,6 +115,20 @@ Because the state is keyed by **worktree basename**, every pane reads its own va
 > send needs the `name [ref]` form from `ListAgents` — a bare-name miss fails
 > loudly and names the right ref.
 
+> **Between machines: `node-msg`, not `pane-msg`.** Native messaging only
+> reaches sessions of the same account, and `pane-msg` has no IDs, receipts or
+> retry. For messages between hosts, and anywhere a delivery/read receipt
+> matters, the maintainer's setup uses `node-msg` (lives in a private
+> multi-host repo, not here): one file per message, states
+> queued → sent → delivered → read → done, an outbox with retry and dead
+> letters, a per-host launchd delivery agent that wakes the target through the
+> session's inbox socket. `pane-msg` stays the tool for tmux panes on the
+> **same host**. Two rules when you do use it: **one watcher per pane** —
+> `pane-inbox-await` takes a lock per target, so never start a second one; and
+> the target is a **tmux target** (`session:window.pane`, e.g. `4later:1.1`),
+> never a Claude session name like `project:pane1` (that mailbox never gets
+> mail, and `pane-inbox-await` now rejects it).
+
 The obvious way to hand work between panes is `tmux send-keys` into the target's
 input line (that's `send-to-pane`). It has two problems: it **overwrites whatever
 the user is typing** in that pane, and a long brief can stick as an unsubmitted
