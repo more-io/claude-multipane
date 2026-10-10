@@ -25,6 +25,7 @@ ln -sf "$REPO/hooks/pane-inbox-drain.sh"  "$CL/hooks/pane-inbox-drain.sh"
 # resolves there. Install REAL COPIES outside ~/Documents. Re-run this script
 # after editing either file in the repo to re-sync.
 cp "$REPO/bin/pane-msg"                "$CL/pane-msg";                       chmod +x "$CL/pane-msg"
+cp "$REPO/bin/pane-inbox-await"        "$CL/pane-inbox-await";               chmod +x "$CL/pane-inbox-await"
 cp "$REPO/hooks/pane-inbox-watcher.sh" "$CL/hooks/pane-inbox-watcher.sh";    chmod +x "$CL/hooks/pane-inbox-watcher.sh"
 
 # WatchPaths needs the trigger file to exist before load.

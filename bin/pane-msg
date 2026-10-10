@@ -7,7 +7,7 @@
 # prompt (Nudge-Hybrid). Each pane drains its own inbox with `pane-msg read`.
 #
 # Usage:
-#   pane-msg send <target> [--type T] [--ref R] [--from F] [--silent] <body...>
+#   pane-msg send <target> [--type T] [--ref R] [--from F] [--silent] [--priority alert] <body...>
 #   pane-msg read  [<self-target>]     # print+consume unread (auto-detects self)
 #   pane-msg peek  [<self-target>]     # print unread WITHOUT consuming
 #   pane-msg status                    # unread counts across all mailboxes
@@ -23,6 +23,8 @@
 #   --silent:      never nudge — append only; Stop-hook delivers on next turn.
 #   --nudge:       explicit default (guarded wake); kept for clarity.
 #   --force-nudge: nudge even if the input has text (legacy; CAN clobber input).
+#   --priority alert: force-nudge AND mark the nudge line with 🚨 (#1512); for
+#                  red alerts only, since it can clobber typed input.
 set -euo pipefail
 
 MB="${PANE_MSG_HOME:-$HOME/.claude/tmux-state/mailbox}"
@@ -133,12 +135,13 @@ warn_sender_unreachable() {
 }
 
 nudge() {
-  local target="$1" from="${2:-}"
+  local target="$1" from="${2:-}" marker="${3:-}"
   # Minimal wake trigger — payload stays in the inbox file. Only ever sent when
   # input_is_clear() confirmed the line is empty. Name the sender (if known) so
   # the pane — and whoever is watching it — sees WHO messaged before reading.
   local head='📨 pane-msg'
   [ -n "$from" ] && head="📨 pane-msg from ${from}"
+  [ -n "$marker" ] && head="${marker} ${head}"
   tmux send-keys -t "$target" -l "${head}: run 'pane-msg read' and handle the queued message(s)"
   # Claude Code's input needs a beat between pasted text and Enter — an Enter
   # racing the paste gets swallowed and the nudge sits unsubmitted (field find
@@ -159,7 +162,7 @@ case "$cmd" in
     # line is empty & it isn't busy, so it can't clobber typing; otherwise falls
     # back to Stop-hook delivery), never (pure Stop-hook, never touches the
     # prompt), force (nudge regardless — can clobber).
-    nudge_mode="auto"; type="note"; ref=""; from=""; force_target="no"
+    nudge_mode="auto"; type="note"; ref=""; from=""; force_target="no"; priority=""
     target="${1:-}"; shift || { echo "pane-msg send: missing <target>" >&2; exit 1; }
     # parse flags interleaved with body
     body_parts=()
@@ -172,11 +175,18 @@ case "$cmd" in
         --type)   type="${2:-note}"; shift 2;;
         --ref)    ref="${2:-}"; shift 2;;
         --from)   from="${2:-}"; shift 2;;
+        --priority) priority="${2:-}"; shift 2;;
         *)        body_parts+=("$1"); shift;;
       esac
     done
     [ -n "$from" ] || from="$(self_target 2>/dev/null || echo unknown)"
     body="${body_parts[*]:-}"
+    marker=""
+    case "$priority" in
+      "") ;;
+      alert) nudge_mode="force"; marker="🚨" ;;
+      *) echo "pane-msg send: unknown --priority '$priority' (only: alert)" >&2; exit 1 ;;
+    esac
     [ -n "$body" ] || { echo "pane-msg send: empty body" >&2; exit 1; }
 
     # Refuse to write into a mailbox no pane will ever drain. The message would
@@ -202,8 +212,12 @@ case "$cmd" in
     key="$(key_of "$target")"
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     # Safe JSON encoding via python3.
-    line="$(FROM="$from" TO="$target" TYPE="$type" REF="$ref" TS="$ts" BODY="$body" \
-      python3 -c 'import json,os; print(json.dumps({k.lower():os.environ[k] for k in ("FROM","TO","TYPE","REF","TS","BODY")}))')"
+    line="$(FROM="$from" TO="$target" TYPE="$type" REF="$ref" TS="$ts" BODY="$body" PRIORITY="$priority" \
+      python3 -c 'import json,os
+m = {k.lower(): os.environ[k] for k in ("FROM","TO","TYPE","REF","TS","BODY")}
+if os.environ["PRIORITY"]:
+    m["priority"] = os.environ["PRIORITY"]
+print(json.dumps(m))')"
     printf '%s\n' "$line" >> "$MB/$key.inbox.jsonl"
     # Bump the watcher trigger file so launchd (WatchPaths) fires the delivery
     # sweeper. This is what makes delivery reliable even when the target is busy
@@ -215,8 +229,8 @@ case "$cmd" in
         echo "queued → $target (no send-time nudge; watcher / its Stop-hook will deliver)"
         ;;
       force)
-        nudge "$target" "$from"
-        echo "queued + nudged (forced) → $target"
+        nudge "$target" "$from" "$marker"
+        echo "queued + nudged (forced${priority:+, priority $priority}) → $target"
         ;;
       auto)
         if input_is_clear "$target"; then
@@ -310,6 +324,8 @@ for i, l in enumerate(sys.stdin, 1):
         continue
     m = json.loads(l)
     typ = m.get("type", "note")
+    if m.get("priority"):
+        typ += "!" + m["priority"]
     frm = m.get("from", "?")
     ts = m.get("ts", "")
     ref = m.get("ref", "")
