@@ -58,7 +58,7 @@
 #     target it maps to.
 #
 # Usage:
-#   pane-inbox-await                        # auto-detect self, 1 h timeout
+#   pane-inbox-await                        # auto-detect self, waits up to 7 days
 #   pane-inbox-await --timeout 1800         # shorter window
 #   pane-inbox-await mysession:1.1          # explicit target
 #
@@ -72,8 +72,10 @@ MB="${PANE_MSG_HOME:-$HOME/.claude/tmux-state/mailbox}"
 STATE="${PANE_INBOX_AWAIT_STATE:-$HOME/.claude/tmux-state}"
 SESSIONS="${PANE_INBOX_AWAIT_SESSIONS:-$HOME/.claude/sessions}"
 PANES_CONF="${PANE_INBOX_AWAIT_PANES_CONF:-$HOME/.claude/panes.conf}"
-timeout=3600
-interval=20
+# 7 days, not 1 h (14.10.2026): every quiet hour used to end the task, wake the
+# pane with "no mail" and need a manual re-arm. The watcher now exits on mail.
+timeout=604800
+interval=30
 target=""
 
 while [ $# -gt 0 ]; do
